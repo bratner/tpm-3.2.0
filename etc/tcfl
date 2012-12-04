@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# add this script to /etc/rc.d/init.d and run it to clean up slim labels
+# during startup, before a user logs in.
+#
+rm -rf /tmp/gconf-*
+mkdir -p /tmp/.ICE-unix
+chmod 1777 /tmp/.ICE-unix
+mkdir -p /tmp/.X11-unix
+chmod 1777 /tmp/.X11-unix
+/usr/local/bin/tc_label fixup /tmp
+/usr/local/bin/tc_label fixup /var/run/utmp
+/usr/local/bin/tc_label fixup /etc/fstab
+/usr/local/bin/tc_label fixup /var/log/messages
+/usr/local/bin/tc_label fixup /var/log/wtmp
+/usr/local/bin/tc_label promote /var/log/cups/error_log "UNTRUSTED"
+/usr/local/bin/tc_label promote /var/run/dbus "EXEMPT"
+/usr/local/bin/tc_label promote /var/run/dbus/system_bus_socket "EXEMPT"
+/usr/local/bin/tc_label promote /var/run/acpid.socket "EXEMPT"

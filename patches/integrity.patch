@@ -1,0 +1,292 @@
+Index: linux-2.6.20-rc4-mm1/security/integrity_dummy.c
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/security/integrity_dummy.c
++++ linux-2.6.20-rc4-mm1/security/integrity_dummy.c
+@@ -3,7 +3,7 @@
+  *
+  * Instantiate integrity subsystem
+  *
+- * Copyright (C) 2005,2006 IBM Corporation
++ * Copyright (C) 2005,2006,2007 IBM Corporation
+  * Author: Mimi Zohar <zohar@us.ibm.com>
+  *
+  *      This program is free software; you can redistribute it and/or modify
+@@ -62,9 +62,78 @@ static void dummy_measure(struct dentry 
+ 	return;
+ }
+ 
++static int dummy_inode_alloc_integrity(struct inode *inode)
++{
++	return 0;
++}
++
++static void dummy_inode_free_integrity(struct inode *inode)
++{
++	return;
++}
++
++static int dummy_inode_init_integrity(struct inode *inode, struct inode *dir,
++				      char **name, void **value, size_t * len)
++{
++	return -EOPNOTSUPP;
++}
++
++static void dummy_file_free_integrity(struct file *file)
++{
++	return;
++}
++
++static int dummy_inode_setxattr(struct dentry *dentry, char *name, void *value,
++				size_t size, int flags)
++{
++	if (!strncmp(name, XATTR_SECURITY_PREFIX,
++		     sizeof(XATTR_SECURITY_PREFIX) - 1) &&
++	    !capable(CAP_SYS_ADMIN))
++		return -EPERM;
++	return 0;
++}
++
++static void dummy_inode_hmacxattr(struct dentry *dentry, char *name)
++{
++}
++
++static void dummy_d_instantiate(struct dentry *dentry, struct inode *inode)
++{
++	return;
++}
++
+ struct integrity_operations dummy_integrity_ops = {
+ 	.verify_metadata = dummy_verify_metadata,
+ 	.verify_data = dummy_verify_data,
+-	.measure = dummy_measure
++	.measure = dummy_measure,
++	.inode_setxattr = dummy_inode_setxattr,
++	.inode_hmacxattr = dummy_inode_hmacxattr,
++	.inode_alloc_integrity = dummy_inode_alloc_integrity,
++	.inode_init_integrity = dummy_inode_init_integrity,
++	.inode_free_integrity = dummy_inode_free_integrity,
++	.file_free_integrity = dummy_file_free_integrity,
++	.d_instantiate = dummy_d_instantiate
+ };
+ 
++#define set_to_dummy_if_null(ops, function)				\
++	do {								\
++		if (!ops->function) {					\
++			ops->function = dummy_##function;		\
++			printk(KERN_INFO "Had to override the " #function \
++			" security operation with the dummy one.\n");\
++			}						\
++	} while (0)
++
++void integrity_fixup_ops(struct integrity_operations *ops)
++{
++	set_to_dummy_if_null(ops, verify_metadata);
++	set_to_dummy_if_null(ops, verify_data);
++	set_to_dummy_if_null(ops, measure);
++	set_to_dummy_if_null(ops, inode_setxattr);
++	set_to_dummy_if_null(ops, inode_hmacxattr);
++	set_to_dummy_if_null(ops, inode_alloc_integrity);
++	set_to_dummy_if_null(ops, inode_init_integrity);
++	set_to_dummy_if_null(ops, inode_free_integrity);
++	set_to_dummy_if_null(ops, file_free_integrity);
++	set_to_dummy_if_null(ops, d_instantiate);
++}
+Index: linux-2.6.20-rc4-mm1/security/integrity_dummy.h
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/security/integrity_dummy.h
++++ linux-2.6.20-rc4-mm1/security/integrity_dummy.h
+@@ -1,7 +1,7 @@
+ /*
+  * integrity_dummy.h
+  *
+- * Copyright (C) 2005,2006 IBM Corporation
++ * Copyright (C) 2005,2006,2007 IBM Corporation
+  * Author: Mimi Zohar <zohar@us.ibm.com>
+  *
+  *      This program is free software; you can redistribute it and/or modify
+@@ -10,3 +10,4 @@
+  */
+ 
+ extern struct integrity_operations dummy_integrity_ops;
++extern void integrity_fixup_ops(struct integrity_operations *ops);
+Index: linux-2.6.20-rc4-mm1/include/linux/integrity.h
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/include/linux/integrity.h
++++ linux-2.6.20-rc4-mm1/include/linux/integrity.h
+@@ -1,7 +1,7 @@
+ /*
+  * integrity.h
+  *
+- * Copyright (C) 2005,2006 IBM Corporation
++ * Copyright (C) 2005,2006,2007 IBM Corporation
+  * Author: Mimi Zohar <zohar@us.ibm.com>
+  *
+  *      This program is free software; you can redistribute it and/or modify
+@@ -57,13 +57,22 @@ struct integrity_operations {
+ 	int (*verify_data) (struct dentry *dentry, int *status);
+ 	void (*measure) (struct dentry *dentry,
+ 			const unsigned char *filename, int mask);
++	int (*inode_setxattr) (struct dentry *dentry, char *name, void *value,
++			       size_t size, int flags);
++	void (*inode_hmacxattr) (struct dentry *dentry, char *name);
++	int (*inode_alloc_integrity) (struct inode *inode);
++	void (*inode_free_integrity) (struct inode *inode);
++	int (*inode_init_integrity) (struct inode *inode, struct inode *dir,
++				    char **name, void **value, size_t *len);
++	void (*file_free_integrity) (struct file * file);
++	void (*d_instantiate) (struct dentry *dentry, struct inode *inode);
+ };
+ extern int register_integrity(struct integrity_operations *ops);
+ extern int unregister_integrity(struct integrity_operations *ops);
+ 
+ /* global variables */
+ extern struct integrity_operations *integrity_ops;
+-enum integrity_verify_status {
++enum integrity_status {
+ 	INTEGRITY_PASS = 0, INTEGRITY_FAIL = -1, INTEGRITY_NOLABEL = -2
+ };
+ 
+@@ -77,8 +86,7 @@ static inline int integrity_verify_metad
+ 			xattr_value, xattr_val_len, status);
+ }
+ 
+-static inline int integrity_verify_data(struct dentry *dentry,
+-					int *status)
++static inline int integrity_verify_data(struct dentry *dentry, int *status)
+ {
+ 	return integrity_ops->verify_data(dentry, status);
+ }
+@@ -88,6 +96,54 @@ static inline void integrity_measure(str
+ {
+ 	integrity_ops->measure(dentry, filename, mask);
+ }
++
++static inline int integrity_inode_setxattr(struct dentry *dentry, char *name,
++					   void *value, size_t size, int flags)
++{
++	if (unlikely (IS_PRIVATE (dentry->d_inode)))
++		return 0;
++	return integrity_ops->inode_setxattr(dentry, name, value, size, flags);
++}
++
++static inline void integrity_inode_hmacxattr(struct dentry *dentry, char *name)
++{
++	if (unlikely (IS_PRIVATE (dentry->d_inode)))
++		return;
++ 	integrity_ops->inode_hmacxattr(dentry, name);
++}
++
++static inline int integrity_inode_alloc(struct inode *inode)
++{
++	return integrity_ops->inode_alloc_integrity(inode);
++}
++
++static inline void integrity_inode_free(struct inode *inode)
++{
++	integrity_ops->inode_free_integrity(inode);
++}
++
++static inline int integrity_inode_init_integrity(struct inode *inode,
++						struct inode *dir,
++						char **name,
++						void **value,
++						size_t *len)
++{
++	if (unlikely (IS_PRIVATE (inode)))
++		return -EOPNOTSUPP;
++	return integrity_ops->inode_init_integrity(inode, dir, name, value, len);
++}
++
++static inline void integrity_file_free(struct file *file)
++{
++	integrity_ops->file_free_integrity(file);
++}
++
++static inline void integrity_d_instantiate(struct dentry *dentry, struct inode *inode)
++{
++	if (unlikely (inode && IS_PRIVATE(inode)))
++		return;
++	integrity_ops->d_instantiate(dentry, inode);
++}
+ #else
+ static inline int integrity_verify_metadata(struct dentry *dentry,
+ 			char *xattr_name, char **xattr_value,
+@@ -97,8 +153,7 @@ static inline int integrity_verify_metad
+ 	return 0;
+ }
+ 
+-static inline int integrity_verify_data(struct dentry *dentry,
+-					int *status)
++static inline int integrity_verify_data(struct dentry *dentry, int *status)
+ {
+ 	status = INTEGRITY_PASS;
+ 	return 0;
+@@ -108,5 +163,47 @@ static inline void integrity_measure(str
+ 			const unsigned char *filename, int mask)
+ {
+ }
++
++static inline int integrity_inode_setxattr(struct dentry *dentry, char *name,
++					   void *value, size_t size, int flags)
++{
++	return 0;
++}
++
++static inline void integrity_inode_hmacxattr(struct dentry *dentry, char *name)
++{ }
++
++static inline int integrity_inode_alloc(struct inode *inode)
++{
++	return 0;
++}
++
++static inline void integrity_inode_free(struct inode *inode)
++{ }
++
++static inline int integrity_inode_init_integrity(struct inode *inode,
++						struct inode *dir,
++						char **name,
++						void **value,
++						size_t *len)
++{
++	return -EOPNOTSUPP;
++}
++
++static inline int integrity_file_permission(struct file *file, int mask)
++{
++	return 0;
++}
++
++static inline void integrity_file_free(struct file *file)
++{
++	return;
++}
++
++static inline void integrity_d_instantiate(struct dentry *dentry, struct inode *inode)
++{
++	return;
++}
++
+ #endif
+ #endif
+Index: linux-2.6.20-rc4-mm1/security/integrity.c
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/security/integrity.c
++++ linux-2.6.20-rc4-mm1/security/integrity.c
+@@ -3,7 +3,7 @@
+  *
+  * register integrity subsystem
+  *
+- * Copyright (C) 2005,2006 IBM Corporation
++ * Copyright (C) 2005,2006,2007 IBM Corporation
+  * Author: Mimi Zohar <zohar@us.ibm.com>
+  *
+  *      This program is free software; you can redistribute it and/or modify
+@@ -27,6 +27,7 @@ int register_integrity(struct integrity_
+ 		return -EAGAIN;
+ 
+ 	integrity_ops = ops;
++	integrity_fixup_ops(integrity_ops);
+ 	return 0;
+ }
+ 

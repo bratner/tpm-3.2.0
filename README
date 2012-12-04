@@ -1,0 +1,102 @@
+This package provides kernel patches and associated user level programs
+for an integrity framework, an integrity framework provider(EVM), and
+two LSM modules - Integrity Based Access Control(IBAC) and Simple Linux
+Integrity Module(SLIM). IBAC bases access control decisions on the new
+integrity framework services. SLIM offers a simple low water-mark
+integrity mandatory access control model.
+
+Contents:
+
+	- kernel_patches - 6 integrity patches, 1 SLIM patch, and 
+		1 IBAC patch against 2.6.20-rc4-mm1
+	- initrd - creates a modified initrd initializing EVM
+	- tc_label - utility to set/clear EVM and SLIM xattrs
+	- level - utility to report a process or file's current SLIM level
+	- etc - config and rc scripts
+	- libtpm - a small, low-level TPM access library
+	- tpm_utils - simple TPM utility programs based on libtpm
+
+Installation:
+
+EVM verifies the integrity of all files using hmac, using a symmetric
+kernel master key from root's keyring. This key can be provided at boot time 
+in many ways. The supplied loadkernkey utility is provided for initrd time
+initialization of this key, either from TPM sealed keys in /etc/bootkeys,
+or if a TPM or these keys are not found, then from a console prompted
+password input. For systems which don't use initrd, this could be
+done similarly in rc.sysinit.
+
+If you are going to use a TPM, make sure it is enabled and cleared
+in BIOS setup, and include the starred '*' instructions. If you
+are going to use the boot time password, skip the starred items.
+
+1. apply the kernel patches to linux-2.6.20-mm4-rc1 in 
+   kernel_patches/series order.
+2. configure the kernel disabling SELinux and enabling EVM, SLIM,
+   IBAC, hmac, md5, and your TPM, if desired.
+3. make and install the new kernel.
+
+4. cd into libtpm and do a make.
+5. cd into tpm_utils, kernkey, tc_label, and level and do make and 
+   make install.
+6. cd into initrd, edit Makefile to point to the new kernel version,
+   and do a make and make install. 
+
+7. Edit your grub config to use the new initrd and add 
+   "selinux=0 evm_install_mode=1" to the grub kernel command line.
+
+8*. mkdir /etc/bootkeys
+9*. modprobe tpm_atmel [or tpm_nsc, or tpm_tis, as appropriate]
+10*. init_tpm /etc/bootkeys
+
+11. reboot to the new kernel and initrd  
+12. before labeling the system:
+    if prelink has been run, execute:
+	prelink -ua 
+	mv /usr/sbin/prelink /usr/sbin/prelink.dont
+     (prelink periodically rewrites all binaries, corrupting their
+     hashes.  For now, we un-prelink all the binaries and turn prelink 
+     off. In the future we will look at patching prelink to update the 
+     hashes...)
+
+13. copy etc/slim.conf to /etc, and etc/tcfl to /etc/rc.d/init.d, and
+   create an appropriate symlink to invoke the tcfl script during boot,
+   sometime after messagebus and acpid have been started.
+   In the case of Fedora core 6, this would be /etc/rc.d/rc5.d/S45tcfl.
+   /etc/rc.d/rc.sysinit needs to add the following, just after
+   the root is remounted read-write:
+       /usr/local/bin/tc_label promote /etc/fstab "SYSTEM"
+       /usr/local/bin/tc_label promote /etc/blkid/blkid.tab "SYSTEM"
+       /usr/local/bin/tc_label promote /etc/mtab "SYSTEM"
+       /usr/local/bin/tc_label promote /etc/ld.so.cache "SYSTEM"
+   The etc directory contains a copy of FC6's rc.sysinit with this fix
+   for use or reference.
+
+14. label the system:
+       if the system is labeled from a previous version, clean with
+           /usr/local/bin/tc_label clean /
+       apply new labels with
+           /usr/local/bin/tc_label fixup /
+       [this initial labeling takes around 30 minutes]
+
+15. Edit your grub config and remove the grub kernel command line option 
+    "evm_install_mode=1" and add either "ibac=1 ibac_enforce=1" or 
+    "slim=1 slm_integrity_enforce=1" to enable the desired LSM module.
+
+reboot to the new kernel and initrd...
+
+TIPS:
+
+The level command tells you what integrity level the current process or
+designated file is at. It is very useful to add this indication to
+prompts and window titles by adding $(level) appropriately to
+/etc/bashrc, for the PROMPT_COMMAND and PS1 definitions:
+
+   PROMPT_COMMAND='echo -ne "\033]0;${USER}($(level))@${HOSTNAME%%.*}:${PWD/#$HOME/~}\007"'
+and
+   [ "$PS1" = "\\s-\\v\\\$ " ] && PS1="[\u($(level))@\h \W]\\$ "
+
+(The etc directory includes a copy of /etc/bashrc with these modifications.)
+
+The ps -Z option displays levels for all processes.
+

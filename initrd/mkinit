@@ -1,0 +1,3 @@
+#!/bin/sh
+cat init.orig|awk '/echo Switching to new root/ { system("cat init.tcfl") } \
+                                                { print $0 }' >init

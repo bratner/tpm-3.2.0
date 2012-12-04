@@ -1,0 +1,32 @@
+.\" Copyright 2005 IBM (David Safford)
+.\"
+.\" Written October 2005, David Safford
+.\"
+.TH level 1  2005-10 07 "IBM" "TPM Utilities"
+.SH NAME
+level \- Display the SLIM Mandatory Access Control Integrity level
+.SH SYNOPSIS
+level
+.br
+level [-s] file...
+.SH DESCRIPTION
+The \fBlevel\fP command is used to display the integrity level
+for the invoking process, or of specified files.
+.SH ARGUMENTS
+.TP 5
+[-s] file ...
+Without argument, level reports the current process's SLIM integrity
+level. (This is equivalent to cat'ing /sys/kernel/security/slim/level.)
+With filename argument(s), level displays the file's level, hash, mutable,
+and hmac attributes. Hashes are compared to values in the rpm database, if
+available, and to the actual file's measured hash. If a file is a symbolic
+link, values for the link and the target of the link are reported.
+.br
+The -s option causes level to report only the SLIM label, and not
+the EVM related integrity information.
+.SH FILES
+/sys/kernel/security/slim/level
+.SH "SEE ALSO"
+tc_label(1), slim(4), evm(4)
+.SH AUTHOR
+David Safford , IBM T. J. Watson Research Center

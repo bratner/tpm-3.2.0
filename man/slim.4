@@ -1,0 +1,39 @@
+.\" Copyright 2005 IBM (David Safford)
+.\"
+.\" Written October 2005, David Safford
+.\"
+.TH slim 4  2005-10 07 "IBM" "TPM Utilities"
+.SH NAME
+slim \- Simple Linux Integrity Module
+.SH DESCRIPTION
+SLIM is an LSM kernel module which performs a simple low water-mark
+form of integrity mandatory access control. In this model, files are
+labeled with the security.slim.level extended attribute, which is 
+authenticated by the integrity subsystem call integrity_verify_metadata(),
+and the file's hash is authenticated by the integrity subsystem 
+call integrity_verify_data().
+Values for the level are SYSTEM, USER, and UNTRUSTED. Executable files
+can be designated as integrity guard programs with additional labels
+for the lower and upper watermarks allowed. SLIM also performs 
+a corresponding high water-mark privacy model, with levels
+PUBLIC, USER, USER-SENSITIVE and SYSTEM-SENSITIVE.  The value
+of a security.slim.level attribute is ascii, in the form
+Integrity_Level Privacy_Level [Guard_Low_level Guard_High_Level][UNLIMITED].
+A typical system executable will be labeled with "SYSTEM PUBLIC".
+An integrity guard process is allowed to remain at Guard_High_Level,
+even while reading data labeled as low as Guard_Low_Level.
+.br
+Processes start at SYSTEM level, or inherit their level from their
+parent. Processes are demoted if they read or execute files from
+lower levels. Network sockets are by definition UNTRUSTED.
+.br
+SLIM debugging can be enabled/disabled by writing a '1'|'0'
+respectively to /sys/kernel/debug/slim/integrity. 
+.SH ARGUMENTS
+.TP 5
+.SH FILES
+/sys/kernel/security/slim/level
+.SH "SEE ALSO"
+tc_label(1), level(1), slim(4), evm(4)
+.SH AUTHOR
+David Safford , IBM T. J. Watson Research Center

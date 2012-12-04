@@ -1,0 +1,138 @@
+Index: linux-2.6.20-rc4-mm1/fs/inode.c
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/fs/inode.c
++++ linux-2.6.20-rc4-mm1/fs/inode.c
+@@ -1201,8 +1201,8 @@ void touch_atime(struct vfsmount *mnt, s
+ EXPORT_SYMBOL(touch_atime);
+ 
+ /**
+- *	file_update_time	-	update mtime and ctime time
+- *	@file: file accessed
++ *	inode_update_time	-	update mtime and ctime time
++ *	@inode: file accessed
+  *
+  *	Update the mtime and ctime members of an inode and mark the inode
+  *	for writeback.  Note that this function is meant exclusively for
+@@ -1212,9 +1212,8 @@ EXPORT_SYMBOL(touch_atime);
+  *	timestamps are handled by the server.
+  */
+ 
+-void file_update_time(struct file *file)
++void inode_update_time(struct inode *inode)
+ {
+-	struct inode *inode = file->f_path.dentry->d_inode;
+ 	struct timespec now;
+ 	int sync_it = 0;
+ 
+@@ -1238,7 +1237,7 @@ void file_update_time(struct file *file)
+ 		mark_inode_dirty_sync(inode);
+ }
+ 
+-EXPORT_SYMBOL(file_update_time);
++EXPORT_SYMBOL(inode_update_time);
+ 
+ int inode_needs_sync(struct inode *inode)
+ {
+Index: linux-2.6.20-rc4-mm1/fs/fs-writeback.c
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/fs/fs-writeback.c
++++ linux-2.6.20-rc4-mm1/fs/fs-writeback.c
+@@ -167,6 +167,9 @@ __sync_single_inode(struct inode *inode,
+ 
+ 	spin_unlock(&inode_lock);
+ 
++	if (test_and_clear_bit(AS_MCTIME, &mapping->flags))
++		inode_update_time(inode);
++
+ 	ret = do_writepages(mapping, wbc);
+ 
+ 	/* Don't write the inode if only I_DIRTY_PAGES was set */
+Index: linux-2.6.20-rc4-mm1/fs/buffer.c
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/fs/buffer.c
++++ linux-2.6.20-rc4-mm1/fs/buffer.c
+@@ -725,8 +725,11 @@ int __set_page_dirty_buffers(struct page
+ 	}
+ 	spin_unlock(&mapping->private_lock);
+ 
+-	if (TestSetPageDirty(page))
++	if (TestSetPageDirty(page)) {
++		if (page_mapped(page))
++			set_bit(AS_MCTIME, &mapping->flags);
+ 		return 0;
++	}
+ 
+ 	write_lock_irq(&mapping->tree_lock);
+ 	if (page->mapping) {	/* Race with truncate? */
+@@ -740,6 +743,8 @@ int __set_page_dirty_buffers(struct page
+ 	}
+ 	write_unlock_irq(&mapping->tree_lock);
+ 	__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
++	if (page_mapped(page))
++		set_bit(AS_MCTIME, &mapping->flags);
+ 	return 1;
+ }
+ EXPORT_SYMBOL(__set_page_dirty_buffers);
+Index: linux-2.6.20-rc4-mm1/include/linux/fs.h
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/include/linux/fs.h
++++ linux-2.6.20-rc4-mm1/include/linux/fs.h
+@@ -1946,7 +1946,12 @@ extern int buffer_migrate_page(struct ad
+ extern int inode_change_ok(struct inode *, struct iattr *);
+ extern int __must_check inode_setattr(struct inode *, struct iattr *);
+ 
+-extern void file_update_time(struct file *file);
++extern void inode_update_time(struct inode *);
++
++static inline void file_update_time(struct file *file)
++{
++	inode_update_time(file->f_dentry->d_inode);
++}
+ 
+ static inline ino_t parent_ino(struct dentry *dentry)
+ {
+Index: linux-2.6.20-rc4-mm1/include/linux/pagemap.h
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/include/linux/pagemap.h
++++ linux-2.6.20-rc4-mm1/include/linux/pagemap.h
+@@ -17,8 +17,9 @@
+  * Bits in mapping->flags.  The lower __GFP_BITS_SHIFT bits are the page
+  * allocation mode flags.
+  */
+-#define	AS_EIO		(__GFP_BITS_SHIFT + 0)	/* IO error on async write */
++#define AS_EIO		(__GFP_BITS_SHIFT + 0)	/* IO error on async write */
+ #define AS_ENOSPC	(__GFP_BITS_SHIFT + 1)	/* ENOSPC on async write */
++#define AS_MCTIME	(__GFP_BITS_SHIFT + 2)	/* need m/ctime change */
+ 
+ static inline void mapping_set_error(struct address_space *mapping, int error)
+ {
+Index: linux-2.6.20-rc4-mm1/mm/page-writeback.c
+===================================================================
+--- linux-2.6.20-rc4-mm1.orig/mm/page-writeback.c
++++ linux-2.6.20-rc4-mm1/mm/page-writeback.c
+@@ -756,8 +756,10 @@ EXPORT_SYMBOL(write_one_page);
+  */
+ int __set_page_dirty_nobuffers(struct page *page)
+ {
++	struct address_space *mapping = page_mapping(page);
++	int ret = 0;
++
+ 	if (!TestSetPageDirty(page)) {
+-		struct address_space *mapping = page_mapping(page);
+ 		struct address_space *mapping2;
+ 
+ 		if (!mapping)
+@@ -781,9 +783,11 @@ int __set_page_dirty_nobuffers(struct pa
+ 			/* !PageAnon && !swapper_space */
+ 			__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);
+ 		}
+-		return 1;
++		ret = 1;
+ 	}
+-	return 0;
++	if (page_mapped(page))
++		set_bit(AS_MCTIME, &mapping->flags);
++	return ret;
+ }
+ EXPORT_SYMBOL(__set_page_dirty_nobuffers);
+ 

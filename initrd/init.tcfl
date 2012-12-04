@@ -1,0 +1,11 @@
+#### add trusted boot startup
+mknod /dev/tpm0 c 10 224
+sleep 2
+/bin/loadkernkey /sysroot/etc/bootkeys
+mkdir /security
+mount -t securityfs /security /security
+sleep 3
+echo "security.evm.hash security.slim.level security.evm.flags " > /security/evm/config
+sleep 1
+umount /security
+#### end of added trusted boot startup section
